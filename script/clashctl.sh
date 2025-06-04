@@ -89,6 +89,7 @@ _merge_config_restart() {
     local temp_config="/tmp/clash_merge_temp.yaml"
     local raw_rules="/tmp/raw_rules.yaml"
     local mixin_rules="/tmp/mixin_rules.yaml"
+    local merged_rules="/tmp/merged_rules.yaml"
     
     # 首先进行常规配置合并（除了 rules）
     sudo "$BIN_YQ" eval-all '. as $item ireduce ({}; . *+ $item)' "$CLASH_CONFIG_RAW" "$CLASH_CONFIG_MIXIN" | sudo tee "$temp_config" >&/dev/null
@@ -105,15 +106,15 @@ _merge_config_restart() {
     
     if [ "$has_mixin_rules" -gt 0 ] || [ "$has_raw_rules" -gt 0 ]; then
         # 合并 rules：mixin rules 优先（放在前面）+ raw rules（放在后面）
-        sudo "$BIN_YQ" eval-all '. as $item ireduce ([]; . + $item)' "$mixin_rules" "$raw_rules" | \
-        sudo "$BIN_YQ" -i '.rules = input' "$temp_config"
+        sudo "$BIN_YQ" eval-all '. as $item ireduce ([]; . + $item)' "$mixin_rules" "$raw_rules" | sudo tee "$merged_rules" >&/dev/null
+        sudo "$BIN_YQ" -i ".rules = load(\"$merged_rules\")" "$temp_config"
     fi
     
     # 将最终配置写入运行时配置文件
     sudo cat "$temp_config" | sudo tee "$CLASH_CONFIG_RUNTIME" >&/dev/null
     
     # 清理临时文件
-    sudo rm -f "$temp_config" "$raw_rules" "$mixin_rules" 2>/dev/null
+    sudo rm -f "$temp_config" "$raw_rules" "$mixin_rules" "$merged_rules" 2>/dev/null
     
     _valid_config "$CLASH_CONFIG_RUNTIME" || {
         sudo cat $backup | sudo tee "$CLASH_CONFIG_RUNTIME" >&/dev/null
