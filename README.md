@@ -53,7 +53,7 @@ Commands:
     ui                   面板地址
     status               内核状况
     tun      [on|off]    Tun 模式
-    mixin    [-e|-r]     Mixin 配置
+    mixin    [-e|-r|-s]  Mixin 配置
     secret   [SECRET]    Web 密钥
     update   [auto|log]  更新订阅
 ```
@@ -146,11 +146,31 @@ $ clashmixin -e
 
 $ clashmixin -r
 😼 less 查看 运行时 配置
+
+$ clashmixin -s
+😼 显示规则融合状态
 ```
 
 - 将自定义配置写在 `Mixin` 而不是原配置中，可避免更新订阅后丢失自定义配置。
 - 运行时配置是订阅配置和 `Mixin` 配置的并集。
 - 相同配置项优先级：`Mixin` 配置 > 订阅配置。
+
+#### 规则优先级融合
+
+对于 `rules` 规则配置，支持**优先级融合**：
+
+- **Mixin 规则**：高优先级，放在最前面先匹配
+- **订阅规则**：低优先级，放在后面作为兜底
+
+示例：在 `mixin.yaml` 中添加自定义规则
+```yaml
+rules:
+  - DOMAIN-SUFFIX,example.com,DIRECT  # 强制直连
+  - DOMAIN-SUFFIX,github.com,PROXY    # 强制代理
+  # ... 其他自定义规则
+```
+
+使用 `clashmixin -s` 可以查看规则融合状态，了解当前有多少条 Mixin 规则和订阅规则。
 
 ### 卸载
 

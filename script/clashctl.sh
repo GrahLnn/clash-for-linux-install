@@ -84,7 +84,37 @@ function clashui() {
 _merge_config_restart() {
     local backup="/tmp/rt.backup"
     sudo cat "$CLASH_CONFIG_RUNTIME" 2>/dev/null | sudo tee $backup >&/dev/null
-    sudo "$BIN_YQ" eval-all '. as $item ireduce ({}; . *+ $item)' "$CLASH_CONFIG_RAW" "$CLASH_CONFIG_MIXIN" | sudo tee "$CLASH_CONFIG_RUNTIME" >&/dev/null
+    
+    # 创建临时文件用于处理配置合并
+    local temp_config="/tmp/clash_merge_temp.yaml"
+    local raw_rules="/tmp/raw_rules.yaml"
+    local mixin_rules="/tmp/mixin_rules.yaml"
+    
+    # 首先进行常规配置合并（除了 rules）
+    sudo "$BIN_YQ" eval-all '. as $item ireduce ({}; . *+ $item)' "$CLASH_CONFIG_RAW" "$CLASH_CONFIG_MIXIN" | sudo tee "$temp_config" >&/dev/null
+    
+    # 提取原始配置的 rules
+    sudo "$BIN_YQ" '.rules // []' "$CLASH_CONFIG_RAW" | sudo tee "$raw_rules" >&/dev/null
+    
+    # 提取 mixin 配置的 rules  
+    sudo "$BIN_YQ" '.rules // []' "$CLASH_CONFIG_MIXIN" | sudo tee "$mixin_rules" >&/dev/null
+    
+    # 检查是否存在 rules 需要合并
+    local has_mixin_rules=$(sudo "$BIN_YQ" 'length' "$mixin_rules")
+    local has_raw_rules=$(sudo "$BIN_YQ" 'length' "$raw_rules")
+    
+    if [ "$has_mixin_rules" -gt 0 ] || [ "$has_raw_rules" -gt 0 ]; then
+        # 合并 rules：mixin rules 优先（放在前面）+ raw rules（放在后面）
+        sudo "$BIN_YQ" eval-all '. as $item ireduce ([]; . + $item)' "$mixin_rules" "$raw_rules" | \
+        sudo "$BIN_YQ" -i '.rules = input' "$temp_config"
+    fi
+    
+    # 将最终配置写入运行时配置文件
+    sudo cat "$temp_config" | sudo tee "$CLASH_CONFIG_RUNTIME" >&/dev/null
+    
+    # 清理临时文件
+    sudo rm -f "$temp_config" "$raw_rules" "$mixin_rules" 2>/dev/null
+    
     _valid_config "$CLASH_CONFIG_RUNTIME" || {
         sudo cat $backup | sudo tee "$CLASH_CONFIG_RUNTIME" >&/dev/null
         _error_quit "验证失败：请检查 Mixin 配置"
@@ -207,6 +237,31 @@ function clashmixin() {
     -r)
         less -f "$CLASH_CONFIG_RUNTIME"
         ;;
+    -s)
+        # 显示规则融合状态
+        local raw_rules_count=$(sudo "$BIN_YQ" '.rules | length' "$CLASH_CONFIG_RAW" 2>/dev/null || echo 0)
+        local mixin_rules_count=$(sudo "$BIN_YQ" '.rules | length' "$CLASH_CONFIG_MIXIN" 2>/dev/null || echo 0)
+        local runtime_rules_count=$(sudo "$BIN_YQ" '.rules | length' "$CLASH_CONFIG_RUNTIME" 2>/dev/null || echo 0)
+        
+        _okcat "📊 规则融合状态："
+        echo "  原始配置规则数: $raw_rules_count"
+        echo "  Mixin 规则数: $mixin_rules_count"  
+        echo "  运行时规则总数: $runtime_rules_count"
+        echo ""
+        
+        if [ "$mixin_rules_count" -gt 0 ]; then
+            _okcat "🔝 Mixin 规则（高优先级）："
+            sudo "$BIN_YQ" '.rules[]' "$CLASH_CONFIG_MIXIN" 2>/dev/null | head -5 | sed 's/^/  /'
+            [ "$mixin_rules_count" -gt 5 ] && echo "  ... 还有 $((mixin_rules_count - 5)) 条规则"
+            echo ""
+        fi
+        
+        if [ "$raw_rules_count" -gt 0 ]; then
+            _okcat "📋 原始配置规则（低优先级）："
+            sudo "$BIN_YQ" '.rules[]' "$CLASH_CONFIG_RAW" 2>/dev/null | head -3 | sed 's/^/  /'
+            [ "$raw_rules_count" -gt 3 ] && echo "  ... 还有 $((raw_rules_count - 3)) 条规则"
+        fi
+        ;;
     *)
         less -f "$CLASH_CONFIG_MIXIN"
         ;;
@@ -260,7 +315,10 @@ Commands:
     ui                   面板地址
     status               内核状况
     tun      [on|off]    Tun 模式
-    mixin    [-e|-r]     Mixin 配置
+    mixin    [-e|-r|-s]  Mixin 配置
+                         -e  编辑 Mixin 配置
+                         -r  查看运行时配置
+                         -s  显示规则融合状态
     secret   [SECRET]    Web 密钥
     update   [auto|log]  更新订阅
 
